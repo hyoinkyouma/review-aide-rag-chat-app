@@ -37,7 +37,7 @@ Place GGUF model files in the `models/` directory:
 .\env\Scripts\python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
-Standalone script (single query, no server):
+Standalone script (single query, for testing, no server):
 
 ```powershell
 .\env\Scripts\python.exe app.py
