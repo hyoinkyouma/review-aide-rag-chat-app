@@ -1,0 +1,4 @@
+/models/*
+/data/*
+/chroma_db/*
+env
