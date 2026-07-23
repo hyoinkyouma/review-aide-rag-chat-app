@@ -1,362 +1,108 @@
 <!DOCTYPE html>
 <html lang="en" class="h-full">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Local RAG Assistant</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    .msg-user { background: #2563eb; color: white; border-radius: 18px 18px 4px 18px; }
-    .msg-assistant { background: #f3f4f6; color: #1f2937; border-radius: 18px 18px 18px 4px; }
-    .citation-toggle { cursor: pointer; user-select: none; }
-    .citation-body { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
-    .citation-body.open { max-height: 300px; }
-    #messages { scroll-behavior: smooth; }
-    .drop-zone.dragover { border-color: #2563eb; background: #eff6ff; }
-    .typing-indicator span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; animation: typing 1.4s infinite both; }
-    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes typing { 0%, 80%, 100% { transform: scale(0.6); } 40% { transform: scale(1); } }
-    .file-item { transition: background 0.15s; }
-    .file-item:hover { background: #f9fafb; }
-  </style>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>Local RAG Assistant</title>
+ <script src="https://cdn.tailwindcss.com"></script>
+ <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body class="h-full bg-gray-50 flex flex-col">
-  <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shrink-0">
-    <div class="flex items-center gap-2">
-      <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      <h1 class="text-lg font-semibold text-gray-800">Local RAG Assistant</h1>
-    </div>
-    <nav class="flex gap-1 bg-gray-100 rounded-lg p-1">
-      <button id="tab-chat-btn" class="tab-btn px-4 py-1.5 text-sm font-medium rounded-md bg-white shadow-sm text-blue-600" data-tab="chat">Chat</button>
-      <button id="tab-settings-btn" class="tab-btn px-4 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:text-gray-800" data-tab="settings">Settings</button>
-    </nav>
-  </header>
+ <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shrink-0">
+ <div class="flex items-center gap-2">
+ <svg class="w-6 h-6 text-blue-600"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+ <h1 class="text-lg font-semibold text-gray-800">Local RAG Assistant</h1>
+ </div>
+ <div class="flex items-center gap-2">
+ <button id="dark-toggle" class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100" title="Toggle dark mode">
+ <svg id="sun-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+ <svg id="moon-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
+ </button>
+ <nav class="flex gap-1 bg-gray-100 rounded-lg p-1">
+ <button id="tab-chat-btn" class="tab-btn active px-4 py-1.5 text-sm font-medium rounded-md" data-tab="chat">Chat</button>
+ <button id="tab-settings-btn" class="tab-btn px-4 py-1.5 text-sm font-medium rounded-md" data-tab="settings">Settings</button>
+ </nav>
+ </div>
+ </header>
 
-  <!-- ===== CHAT TAB ===== -->
-  <main id="tab-chat" class="tab-content flex-1 flex flex-col min-h-0">
-    <div id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4"></div>
-    <form id="chat-form" class="border-t border-gray-200 bg-white px-4 py-3 flex gap-2 items-end shrink-0">
-      <div class="flex-1 relative">
-        <textarea id="chat-input" rows="2" placeholder="Ask a question about your documents..." class="w-full resize-none rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12"></textarea>
-        <button id="send-btn" type="submit" class="absolute bottom-2 right-2 bg-blue-600 text-white rounded-lg p-2 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
-        </button>
-      </div>
-    </form>
-  </main>
+ <!-- ===== CHAT TAB ===== -->
+ <main id="tab-chat" class="tab-content flex-1 flex flex-col min-h-0">
+ <div id="no-model-banner" class="hidden bg-amber-50 border-b border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 shrink-0">
+ <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+ <span>No chat model loaded. Go to <button onclick="switchTab('settings')" class="font-medium underline hover:text-amber-900">Settings</button> to download one.</span>
+ </div>
+ <div id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4"></div>
+ <form id="chat-form" class="border-t border-gray-200 bg-white px-4 py-3 flex gap-2 items-end shrink-0">
+ <div class="flex-1 relative">
+ <textarea id="chat-input" rows="2" placeholder="Ask a question about your documents..." class="w-full resize-none rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 placeholder-gray-400"></textarea>
+ <div class="absolute bottom-2 right-2 flex items-center gap-1">
+ <button id="web-search-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle web search">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg>
+ </button>
+ <button id="send-btn" type="submit" class="bg-blue-600 text-white rounded-lg p-1.5 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
+ </button>
+ </div>
+ </div>
+ </form>
+ </main>
 
-  <!-- ===== SETTINGS TAB ===== -->
-  <main id="tab-settings" class="tab-content flex-1 hidden flex-col min-h-0 p-6 max-w-3xl mx-auto w-full">
-    <h2 class="text-lg font-semibold text-gray-800 mb-4">Document Management</h2>
+ <!-- ===== SETTINGS TAB ===== -->
+ <main id="tab-settings" class="tab-content flex-1 hidden flex-col min-h-0 overflow-y-auto">
+ <div class="p-6 max-w-3xl mx-auto w-full space-y-8">
 
-    <div id="drop-zone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors">
-      <svg class="w-10 h-10 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
-      <p class="text-sm text-gray-500">Drop PDF or text files here, or <span class="text-blue-600 font-medium">browse</span></p>
-      <p class="text-xs text-gray-400 mt-1">Multiple files accepted</p>
-      <input id="file-input" type="file" multiple accept=".pdf,.txt" class="hidden">
-    </div>
+ <!-- ── Model Management ── -->
+ <section>
+ <h2 class="text-lg font-semibold text-gray-800 mb-4">Model Management</h2>
+ <p class="text-sm text-gray-500 mb-4">Select which chat model to use. Models are downloaded from Hugging Face and stored locally.</p>
 
-    <div id="file-list" class="mt-4 space-y-1.5"></div>
+ <div id="model-list" class="space-y-3"></div>
 
-    <div id="ingestion-controls" class="mt-4 flex gap-2">
-      <button id="ingest-btn" class="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">Process &amp; Ingest</button>
-      <button id="clear-btn" class="px-5 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300">Clear Uploads</button>
-    </div>
+ <div id="dl-progress-area" class="hidden mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+ <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
+ <span id="dl-progress-message">Starting...</span>
+ <span id="dl-progress-pct">0%</span>
+ </div>
+ <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+ <div id="dl-progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
+ </div>
+ </div>
+ </section>
 
-    <div id="progress-area" class="mt-4 hidden">
-      <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
-        <span id="progress-message">Processing...</span>
-        <span id="progress-percent">0%</span>
-      </div>
-      <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-        <div id="progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
-      </div>
-    </div>
-  </main>
+ <hr class="border-gray-200">
 
-  <script>
-    // ===== STATE =====
-    let currentTab = 'chat';
-    let uploadedFiles = [];
-    let polling = false;
+ <!-- ── Document Management ── -->
+ <section>
+ <h2 class="text-lg font-semibold text-gray-800 mb-4">Document Management</h2>
 
-    // ===== DOM REFS =====
-    const $ = (s) => document.querySelector(s);
-    const $$ = (s) => document.querySelectorAll(s);
+ <div id="drop-zone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors">
+ <svg class="w-10 h-10 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+ <p class="text-sm text-gray-500">Drop PDF or text files here, or <span class="text-blue-600 font-medium">browse</span></p>
+ <p class="text-xs text-gray-400 mt-1">Multiple files accepted</p>
+ <input id="file-input" type="file" multiple accept=".pdf,.txt" class="hidden">
+ </div>
 
-    const tabChat = $('#tab-chat');
-    const tabSettings = $('#tab-settings');
-    const tabBtns = $$('.tab-btn');
-    const messagesEl = $('#messages');
-    const chatForm = $('#chat-form');
-    const chatInput = $('#chat-input');
-    const sendBtn = $('#send-btn');
-    const dropZone = $('#drop-zone');
-    const fileInput = $('#file-input');
-    const fileList = $('#file-list');
-    const ingestBtn = $('#ingest-btn');
-    const clearBtn = $('#clear-btn');
-    const progressArea = $('#progress-area');
-    const progressBar = $('#progress-bar');
-    const progressMsg = $('#progress-message');
-    const progressPct = $('#progress-percent');
+ <div id="file-list" class="mt-4 space-y-1.5"></div>
 
-    // ===== TAB SWITCHING =====
-    tabBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
-        switchTab(tab);
-      });
-    });
+ <div id="ingestion-controls" class="mt-4 flex gap-2">
+ <button id="ingest-btn" class="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">Process &amp; Ingest</button>
+ <button id="clear-btn" class="px-5 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300">Clear Uploads</button>
+ </div>
 
-    function switchTab(tab) {
-      currentTab = tab;
-      tabBtns.forEach(b => {
-        b.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
-        b.classList.add('text-gray-600');
-        if (b.dataset.tab === tab) {
-          b.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
-          b.classList.remove('text-gray-600');
-        }
-      });
-      tabChat.classList.toggle('hidden', tab !== 'chat');
-      tabChat.classList.toggle('flex', tab === 'chat');
-      tabSettings.classList.toggle('hidden', tab !== 'settings');
-      tabSettings.classList.toggle('flex', tab === 'settings');
-      if (tab === 'settings') refreshFileList();
-    }
+ <div id="progress-area" class="mt-4 hidden">
+ <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
+ <span id="progress-message">Processing...</span>
+ <span id="progress-percent">0%</span>
+ </div>
+ <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+ <div id="progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
+ </div>
+ </div>
+ </section>
 
-    // ===== CHAT =====
-    let isSending = false;
+ </div>
+ </main>
 
-    function addMessage(role, content, citations) {
-      const div = document.createElement('div');
-      div.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
-      const inner = document.createElement('div');
-      inner.className = `max-w-[80%] md:max-w-[70%] px-4 py-2.5 ${role === 'user' ? 'msg-user' : 'msg-assistant'}`;
-      inner.textContent = content;
-      div.appendChild(inner);
-
-      if (role === 'assistant' && citations && citations.length > 0) {
-        const citeWrapper = document.createElement('div');
-        citeWrapper.className = 'ml-2 mt-1 space-y-1';
-        citations.forEach((c, i) => {
-          const cite = document.createElement('div');
-          cite.className = 'text-xs';
-          const toggle = document.createElement('button');
-          toggle.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
-          toggle.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2-10H7a2 2 0 00-2 2v14l4-2 4 2 4-2 4 2V6a2 2 0 00-2-2z"/></svg> ${c.source}${c.page != null ? ` (p.${c.page})` : ''}`;
-          toggle.dataset.idx = i;
-          const body = document.createElement('div');
-          body.className = 'citation-body pl-4 text-gray-500';
-          body.textContent = c.content;
-          toggle.addEventListener('click', () => {
-            body.classList.toggle('open');
-          });
-          cite.appendChild(toggle);
-          cite.appendChild(body);
-          citeWrapper.appendChild(cite);
-        });
-        div.appendChild(citeWrapper);
-      }
-
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function addTypingIndicator() {
-      const div = document.createElement('div');
-      div.id = 'typing-indicator';
-      div.className = 'flex justify-start';
-      div.innerHTML = `<div class="bg-gray-100 rounded-2xl px-4 py-3 typing-indicator flex gap-1"><span></span><span></span><span></span></div>`;
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function removeTypingIndicator() {
-      const el = document.getElementById('typing-indicator');
-      if (el) el.remove();
-    }
-
-    chatForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const text = chatInput.value.trim();
-      if (!text || isSending) return;
-
-      chatInput.value = '';
-      sendBtn.disabled = true;
-      isSending = true;
-
-      addMessage('user', text);
-      addTypingIndicator();
-
-      try {
-        const resp = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'default',
-            messages: [{ role: 'user', content: text }],
-            temperature: 0.1,
-            max_tokens: 512,
-          }),
-        });
-        const data = await resp.json();
-        removeTypingIndicator();
-        const answer = data.choices?.[0]?.message?.content || '(empty response)';
-        addMessage('assistant', answer, data.citations);
-      } catch (err) {
-        removeTypingIndicator();
-        addMessage('assistant', `Error: ${err.message}`);
-      } finally {
-        isSending = false;
-        sendBtn.disabled = false;
-      }
-    });
-
-    chatInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        chatForm.dispatchEvent(new Event('submit'));
-      }
-    });
-
-    // ===== FILE UPLOAD =====
-    dropZone.addEventListener('click', () => fileInput.click());
-
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-      if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
-    });
-
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files.length) uploadFiles(fileInput.files);
-      fileInput.value = '';
-    });
-
-    async function uploadFiles(fileList) {
-      const form = new FormData();
-      for (const f of fileList) form.append('files', f);
-      try {
-        const resp = await fetch('/v1/files/upload', { method: 'POST', body: form });
-        const data = await resp.json();
-        if (data.status === 'ok') refreshFileList();
-      } catch (err) {
-        alert('Upload failed: ' + err.message);
-      }
-    }
-
-    async function refreshFileList() {
-      try {
-        const resp = await fetch('/v1/files');
-        const data = await resp.json();
-        uploadedFiles = data.files || [];
-        renderFileList();
-      } catch (err) {
-        console.error('Failed to list files:', err);
-      }
-    }
-
-    function formatSize(bytes) {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / 1048576).toFixed(1) + ' MB';
-    }
-
-    function renderFileList() {
-      if (!uploadedFiles.length) {
-        fileList.innerHTML = `<p class="text-sm text-gray-400 text-center py-4">No files uploaded yet</p>`;
-        ingestBtn.disabled = true;
-        return;
-      }
-      ingestBtn.disabled = false;
-      fileList.innerHTML = uploadedFiles.map((f, i) =>
-        `<div class="file-item flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200">
-          <div class="flex items-center gap-2 min-w-0">
-            <svg class="w-5 h-5 text-gray-400 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M19.5 14.25v-6.3a1.5 1.5 0 00-.44-1.06L14.6 3.44a1.5 1.5 0 00-1.06-.44H6.75A2.25 2.25 0 004.5 5.25v13.5A2.25 2.25 0 006.75 21h6.75"/><path d="M14.25 3.75v4.5a.75.75 0 00.75.75h4.5"/></svg>
-            <span class="text-sm text-gray-700 truncate">${f.name}</span>
-            <span class="text-xs text-gray-400 shrink-0">${formatSize(f.size)}</span>
-          </div>
-          <button onclick="deleteFile('${f.name}')" class="text-gray-400 hover:text-red-500 p-1 shrink-0">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>`
-      ).join('');
-    }
-
-    async function deleteFile(name) {
-      try {
-        await fetch('/v1/files/' + encodeURIComponent(name), { method: 'DELETE' });
-        refreshFileList();
-      } catch (err) {
-        console.error('Delete failed:', err);
-      }
-    }
-
-    clearBtn.addEventListener('click', async () => {
-      try {
-        await fetch('/v1/files/clear', { method: 'POST' });
-        refreshFileList();
-      } catch (err) {
-        console.error('Clear failed:', err);
-      }
-    });
-
-    // ===== INGESTION =====
-    ingestBtn.addEventListener('click', async () => {
-      if (ingestBtn.disabled) return;
-      try {
-        const resp = await fetch('/v1/ingest', { method: 'POST' });
-        const data = await resp.json();
-        if (data.status === 'started') {
-          progressArea.classList.remove('hidden');
-          progressBar.style.width = '0%';
-          progressPct.textContent = '0%';
-          progressMsg.textContent = 'Starting ingestion...';
-          ingestBtn.disabled = true;
-          if (!polling) startPolling();
-        }
-      } catch (err) {
-        alert('Failed to start ingestion: ' + err.message);
-      }
-    });
-
-    function startPolling() {
-      polling = true;
-      const interval = setInterval(async () => {
-        try {
-          const resp = await fetch('/v1/ingest/progress');
-          const prog = await resp.json();
-
-          const pct = prog.total > 0 ? Math.round((prog.current / prog.total) * 100) : 0;
-          progressBar.style.width = pct + '%';
-          progressPct.textContent = pct + '%';
-          progressMsg.textContent = prog.message || 'Processing...';
-
-          if (prog.status === 'completed' || prog.status === 'error' || prog.status === 'idle') {
-            clearInterval(interval);
-            polling = false;
-            ingestBtn.disabled = false;
-            if (prog.status === 'completed') {
-              progressMsg.textContent = 'Done! ' + (prog.message || '');
-              refreshFileList();
-              setTimeout(() => { progressArea.classList.add('hidden'); }, 3000);
-            }
-          }
-        } catch (err) {
-          console.error('Polling error:', err);
-        }
-      }, 1000);
-    }
-
-    // ===== WELCOME MESSAGE =====
-    addMessage('assistant', 'Hello! I can answer questions about your documents. Upload files in Settings to expand my knowledge.');
-  </script>
+ <script src="/static/app.js"></script>
 </body>
 </html>

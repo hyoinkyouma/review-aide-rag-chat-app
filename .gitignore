@@ -4,3 +4,7 @@
 *.log
 env
 /uploads/*
+/build/
+/dist/
+*.spec
+*.err
