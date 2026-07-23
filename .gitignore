@@ -1,4 +1,6 @@
 /models/*
 /data/*
 /chroma_db/*
+*.log
 env
+/uploads/*

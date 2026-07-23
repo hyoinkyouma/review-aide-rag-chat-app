@@ -2,10 +2,14 @@ import os
 import json
 import time
 import logging
+import threading
+import shutil
+from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from ddgs import DDGS
 
@@ -19,6 +23,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 DATA_PATH = "./data"
+UPLOAD_PATH = "./uploads"
 PERSIST_DIRECTORY = "./chroma_db"
 EMBEDDING_MODEL_PATH = "./models/all-MiniLM-L6-v2-ggml-model-f16.gguf"
 LLM_MODEL_PATH = "./models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
@@ -52,13 +57,15 @@ class LlamaCppEmbeddings(Embeddings):
 
 llm_instance = None
 retriever = None
+embeddings_instance = None
+ingestion_progress = {"status": "idle", "current": 0, "total": 0, "current_file": "", "message": ""}
 
 
 def build_resources():
-    global llm_instance, retriever
+    global llm_instance, retriever, embeddings_instance
 
     log.info("Initializing llama.cpp Models")
-    embeddings = LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
+    embeddings_instance = LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
     llm_instance = Llama(
         model_path=LLM_MODEL_PATH,
         n_ctx=4096,
@@ -83,10 +90,56 @@ def build_resources():
     log.info("Creating Vector Store")
     vector_store = Chroma.from_documents(
         documents=docs,
-        embedding=embeddings,
+        embedding=embeddings_instance,
         persist_directory=PERSIST_DIRECTORY
     )
     retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+
+
+def run_ingestion(file_paths: list[str]):
+    global ingestion_progress, retriever, embeddings_instance
+
+    embeddings = embeddings_instance or LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
+
+    vector_store = Chroma(
+        persist_directory=PERSIST_DIRECTORY,
+        embedding_function=embeddings
+    )
+
+    total = len(file_paths)
+    ingestion_progress["status"] = "running"
+    ingestion_progress["total"] = total
+
+    for i, file_path in enumerate(file_paths):
+        filename = os.path.basename(file_path)
+        ingestion_progress["current"] = i + 1
+        ingestion_progress["current_file"] = filename
+        ingestion_progress["message"] = f"Loading {filename}..."
+
+        try:
+            if filename.endswith(".pdf"):
+                loader = PyPDFLoader(file_path)
+            else:
+                loader = TextLoader(file_path, encoding="utf-8")
+            raw_docs = loader.load()
+
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
+            docs = text_splitter.split_documents(raw_docs)
+
+            ingestion_progress["message"] = f"Indexing {filename} ({len(docs)} chunks)..."
+            vector_store.add_documents(docs)
+
+            dest = os.path.join(DATA_PATH, filename)
+            shutil.move(file_path, dest)
+
+            ingestion_progress["message"] = f"Processed {filename} ({len(docs)} chunks)"
+        except Exception as e:
+            log.warning(f"Error processing {filename}: {e}")
+            ingestion_progress["message"] = f"Error: {filename} - {e}"
+
+    retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+    ingestion_progress["status"] = "completed"
+    ingestion_progress["message"] = f"Ingested {total} file(s) successfully"
 
 
 SEARCH_INTENT_PATTERNS = [
@@ -134,6 +187,8 @@ def web_search(query: str, max_results: int = 3) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    os.makedirs(DATA_PATH, exist_ok=True)
+    os.makedirs(UPLOAD_PATH, exist_ok=True)
     build_resources()
     yield
 
@@ -165,6 +220,12 @@ class ChatRequest(BaseModel):
     web_search: bool | None = False
 
 
+class Citation(BaseModel):
+    source: str
+    page: int | None = None
+    content: str
+
+
 class ChatResponse(BaseModel):
     id: str
     object: str = "chat.completion"
@@ -172,6 +233,7 @@ class ChatResponse(BaseModel):
     model: str
     choices: list[dict]
     usage: dict
+    citations: list[Citation] = []
 
 
 @app.get("/health")
@@ -189,6 +251,20 @@ async def chat_completions(req: ChatRequest):
 
     doc_chunks = retriever.invoke(query)
     rag_context = "\n\n".join(d.page_content for d in doc_chunks)
+
+    citations = []
+    seen = set()
+    for d in doc_chunks:
+        src = d.metadata.get("source", "Unknown")
+        page = d.metadata.get("page")
+        key = f"{src}:{page}"
+        if key not in seen:
+            seen.add(key)
+            citations.append(Citation(
+                source=os.path.basename(src),
+                page=page,
+                content=d.page_content[:300]
+            ))
 
     messages = [
         {"role": "system", "content": (
@@ -224,6 +300,7 @@ async def chat_completions(req: ChatRequest):
         kwargs["tool_choice"] = {"type": "function", "function": {"name": "web_search"}}
 
     max_rounds = 4
+    answer = ""
     for _ in range(max_rounds + 1):
         resp = llm_instance.create_chat_completion(**kwargs)
         choice = resp["choices"][0]
@@ -268,7 +345,83 @@ async def chat_completions(req: ChatRequest):
             }
         ],
         usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        citations=citations,
     )
+
+
+@app.post("/v1/files/upload")
+async def upload_files(files: list[UploadFile] = File(...)):
+    saved = []
+    for file in files:
+        file_path = os.path.join(UPLOAD_PATH, file.filename)
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        saved.append(file.filename)
+    return {"status": "ok", "files": saved}
+
+
+@app.get("/v1/files")
+async def list_uploaded_files():
+    files_list = []
+    for f in sorted(os.listdir(UPLOAD_PATH)):
+        fpath = os.path.join(UPLOAD_PATH, f)
+        if os.path.isfile(fpath):
+            files_list.append({"name": f, "size": os.path.getsize(fpath)})
+    return {"files": files_list}
+
+
+@app.delete("/v1/files/{filename:path}")
+async def delete_uploaded_file(filename: str):
+    file_path = os.path.join(UPLOAD_PATH, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(404, "File not found")
+    os.remove(file_path)
+    return {"status": "deleted"}
+
+
+@app.post("/v1/ingest")
+async def start_ingestion():
+    global ingestion_progress
+
+    file_paths = [
+        os.path.join(UPLOAD_PATH, f)
+        for f in os.listdir(UPLOAD_PATH)
+        if os.path.isfile(os.path.join(UPLOAD_PATH, f))
+    ]
+    if not file_paths:
+        raise HTTPException(400, "No files to ingest")
+
+    if ingestion_progress["status"] == "running":
+        raise HTTPException(400, "Ingestion already in progress")
+
+    ingestion_progress = {"status": "running", "current": 0, "total": len(file_paths), "current_file": "", "message": "Starting..."}
+    thread = threading.Thread(target=run_ingestion, args=(file_paths,))
+    thread.start()
+    return {"status": "started", "file_count": len(file_paths)}
+
+
+@app.get("/v1/ingest/progress")
+async def get_ingestion_progress():
+    return ingestion_progress
+
+
+@app.post("/v1/files/clear")
+async def clear_uploaded_files():
+    for f in os.listdir(UPLOAD_PATH):
+        fpath = os.path.join(UPLOAD_PATH, f)
+        if os.path.isfile(fpath):
+            os.remove(fpath)
+    return {"status": "cleared"}
+
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+async def serve_index():
+    from fastapi.responses import FileResponse
+    return FileResponse("static/index.html")
 
 
 if __name__ == "__main__":
