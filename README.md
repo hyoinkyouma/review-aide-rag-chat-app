@@ -1,4 +1,4 @@
-# Local RAG POC
+# Review Aide RAG Chat App
 
 Local RAG (Retrieval-Augmented Generation) server using `llama.cpp` for CPU‑based embedding & LLM inference, ChromaDB for vector storage, and DuckDuckGo for optional live web search.
 
@@ -53,6 +53,7 @@ Or with uvicorn directly:
 ```
 
 ### Standalone Script (single query, no server)
+Standalone script (single query, for testing, no server):
 
 ```powershell
 .\env\Scripts\python.exe app.py
